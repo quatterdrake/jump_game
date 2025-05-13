@@ -4,4 +4,3 @@ A 2D game where the character has to jump on platforms to get as high as he can 
 ## Gameplay
 
 ![Game](res/gameplay.gif)
-# jump_game

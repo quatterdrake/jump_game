@@ -1,18 +1,17 @@
 import java.awt.*;
 import java.awt.event.*;
 import java.awt.image.BufferedImage;
-import javax.swing.*;
-import javax.imageio.ImageIO;
 import java.io.File;
 import java.io.FileWriter;
 import java.util.Scanner;
+import javax.imageio.ImageIO;
+import javax.swing.*;
 
-// Probelsm econunters: fps bug, start/death, while only works if has println?
 
-public class Astrojump extends JPanel implements ActionListener,KeyListener
+public class Astrojump extends JPanel implements ActionListener, KeyListener, GameEventListener
 {
 	public Scanner f;
-	public Timer timer;
+	public Timer timer; 
 	public int x;
 	// This y value is how high the character is in the level
 	public int y;
@@ -31,9 +30,6 @@ public class Astrojump extends JPanel implements ActionListener,KeyListener
 	public boolean enterPressed;
 	public boolean qPressed;
 	public boolean rPressed;
-	public boolean grounded;
-	public boolean alive;
-	public boolean started;
 
 	public Platform[] platforms = new Platform[5];
 	public int curPlatformHeight;
@@ -49,9 +45,6 @@ public class Astrojump extends JPanel implements ActionListener,KeyListener
 	public BufferedImage character;
 	public BufferedImage characterSquat;
 	public BufferedImage parachute;
-
-	public int score;
-	public int highscore;
 
 	public static final int HORIZ_ACCEL = 2000;
 	public static final int MAX_HORIZ_SPEED = 1250;
@@ -79,6 +72,8 @@ public class Astrojump extends JPanel implements ActionListener,KeyListener
 	public static final int SCROLL_SPEED_UP_TIME = FPS * 20;
 	public static final int BG_SCROLL_PER_Y = 10;
 
+	private PlayerState state;
+
 	public Astrojump()
 	{
 		x = PLAYER_START_X;
@@ -98,9 +93,6 @@ public class Astrojump extends JPanel implements ActionListener,KeyListener
 		enterPressed = false;
 		qPressed = false;
 		rPressed = false;
-		grounded = true;
-		alive = true;
-		started = false;
 
 		frameY = FRAME_HEIGHT;
 		scrollSpeed = 1;
@@ -121,22 +113,25 @@ public class Astrojump extends JPanel implements ActionListener,KeyListener
 		catch (Exception e) { System.out.println("Missing parachute image"); }
 
 		// Load highscore
-		score = 0;
+		GameManager gm = GameManager.getInstance();
+		gm.setScore(0);
 		try
 		{
 			File highscoreFile = new File(".highscore");
 			highscoreFile.createNewFile();
 			Scanner reader = new Scanner(highscoreFile);
-			highscore = reader.nextInt();
+			if (reader.hasNextInt()) {
+				gm.setHighscore(reader.nextInt());
+			}
 		}
 		catch (Exception e){}
 
 		// Create the first platform and loop to construct the rest
-		platforms[0] = new Platform(0, FIRST_PLATFORM_Y, FRAME_WIDTH);
+		platforms[0] = PlatformFactory.createPlatform(0, FIRST_PLATFORM_Y, FRAME_WIDTH);
 		curPlatformHeight = FRAME_HEIGHT / 2;
 		for (int i = 1; i < platforms.length; ++i)
 		{
-			platforms[i] = new Platform(curPlatformHeight);
+			platforms[i] = PlatformFactory.createPlatform(curPlatformHeight);
 			curPlatformHeight += PLATFORM_DIFFERENCE;
 		}
 
@@ -147,6 +142,11 @@ public class Astrojump extends JPanel implements ActionListener,KeyListener
 		// Start the timer
 		timer = new Timer(1000 / FPS, this);
 		timer.start();
+
+		// Register this as a listener for game events
+		GameManager.getInstance().addListener(this);
+
+		this.state = new GroundedState();
 	}
 
 	public void paint(Graphics gOld)
@@ -160,9 +160,9 @@ public class Astrojump extends JPanel implements ActionListener,KeyListener
 
 		// Clears screen
 		super.paintComponent(g);
-		if (started)
+		if (GameManager.getInstance().isStarted())
 		{
-			if (!alive)
+			if (!GameManager.getInstance().isAlive())
 			{
 				paintDeathScreen(g);
 			}
@@ -214,7 +214,7 @@ public class Astrojump extends JPanel implements ActionListener,KeyListener
 	{
 		g.setColor(Color.WHITE);
 		g.setFont(new Font(Font.SANS_SERIF, Font.ITALIC, 60));
-		g.drawString("Score: " + score, 0, FRAME_HEIGHT - 4);
+		g.drawString("Score: " + GameManager.getInstance().getScore(), 0, FRAME_HEIGHT - 4);
 	}
 
 	public void paintBg(Graphics2D g)
@@ -239,19 +239,19 @@ public class Astrojump extends JPanel implements ActionListener,KeyListener
 		Font f = new Font(Font.SANS_SERIF, Font.ITALIC, 40);
 		g.setFont(f);
 		FontMetrics metrics = g.getFontMetrics();
-		g.drawString("Score: " + score, FRAME_WIDTH / 2 - metrics.stringWidth("Score: " + score) / 2, 390);
-		g.drawString("Highscore: " + highscore, FRAME_WIDTH / 2 - metrics.stringWidth("Highscore: " + highscore) / 2, 440);
+		g.drawString("Score: " + GameManager.getInstance().getScore(), FRAME_WIDTH / 2 - metrics.stringWidth("Score: " + GameManager.getInstance().getScore()) / 2, 390);
+		g.drawString("Highscore: " + GameManager.getInstance().getHighscore(), FRAME_WIDTH / 2 - metrics.stringWidth("Highscore: " + GameManager.getInstance().getHighscore()) / 2, 440);
 
 		g.drawImage(parachute, parachuteX, parachuteY, null);
 	}
 
 	public void update()
 	{
-		if (started)
+		if (GameManager.getInstance().isStarted())
 		{
 			updatePlatforms();
 			updatePlayer();
-			if (!alive)
+			if (!GameManager.getInstance().isAlive())
 				parachutePlayer();
 		}
 		else
@@ -262,74 +262,8 @@ public class Astrojump extends JPanel implements ActionListener,KeyListener
 
 	public void updatePlayer()
 	{
-		// Dead
-		if (frameY - y - PLAYER_HEIGHT > FRAME_HEIGHT)
-			alive = false;
-
-		// Check keys pressed
-		if (leftPressed && Math.abs(xVel) <= MAX_HORIZ_SPEED)
-			xVel -= HORIZ_ACCEL / FPS;
-		if (rightPressed && Math.abs(xVel) <= MAX_HORIZ_SPEED)
-			xVel += HORIZ_ACCEL / FPS;
-
-		// Bounce off walls
-		if (x < 0 || x + PLAYER_WIDTH > FRAME_WIDTH)
-		{
-			xVel = -xVel;
-			if (x < 0)
-				x = 0;
-			else if (x + PLAYER_WIDTH > FRAME_WIDTH)
-				x = FRAME_WIDTH - PLAYER_WIDTH;
-		}
-
-		// Speed limits
-		if (xVel > MAX_HORIZ_SPEED)
-			xVel = MAX_HORIZ_SPEED;
-		else if (xVel < -MAX_HORIZ_SPEED)
-			xVel = -MAX_HORIZ_SPEED;
-		
-		// Land
-		for (int i = 0; i < platforms.length; ++i)
-		{
-			if (yVel <= 0 &&
-				x > platforms[i].getX() - PLAYER_WIDTH &&
-				x < platforms[i].getX() + platforms[i].getLength() &&
-				y <= platforms[i].getY() + PLATFORM_THICKNESS &&
-				y > platforms[i].getY() - FALL_LENIENCE)
-			{
-				grounded = true;
-				y = platforms[i].getY() + PLATFORM_THICKNESS;
-				yVel = 0;
-				break;
-			}
-			else
-				grounded = false;
-		}
-
-		// Friction
-		if (grounded && !leftPressed && !rightPressed)
-		{
-			if (xVel > 0)
-				xVel -= FRICTION / FPS;
-			else if (xVel < 0)
-				xVel += FRICTION / FPS;
-		}
-
-		// Jump
-		if (upPressed && grounded)
-		{
-			grounded = false;
-			yVel = JUMP_SPEED + Math.abs(xVel) / 2;
-		}
-
-		// Fall
-		if (!grounded)
-			yVel += GRAVITY / FPS;
-
-		// Move
-		x += xVel / FPS;
-		y += yVel / FPS;
-
+		state.handleInput(this);
+		state.update(this);
 		// Scroll screen
 		if (y + FRAME_GAP > frameY)
 			frameY = y + FRAME_GAP;
@@ -340,9 +274,9 @@ public class Astrojump extends JPanel implements ActionListener,KeyListener
 		}
 		++scrollUpCounter;
 		frameY += scrollSpeed;
-
 		// Set score
-		score = Math.max((y - FIRST_PLATFORM_Y) / PLATFORM_DIFFERENCE, score);
+		GameManager gm = GameManager.getInstance();
+		gm.setScore(Math.max((y - FIRST_PLATFORM_Y) / PLATFORM_DIFFERENCE, gm.getScore()));
 	}
 	
 	// How player acts on start screen
@@ -421,6 +355,11 @@ public class Astrojump extends JPanel implements ActionListener,KeyListener
 			qPressed = true;
 		else if (key == KeyEvent.VK_R)
 			rPressed = true;
+		else if (key == KeyEvent.VK_D) {
+			// Включаем двойной прыжок
+			setState(new DoubleJumpStateDecorator(getState()));
+			System.out.println("[POWER-UP] Double jump enabled!");
+		}
 	}
 
 	public void keyTyped(KeyEvent e){}
@@ -472,17 +411,17 @@ public class Astrojump extends JPanel implements ActionListener,KeyListener
 			game.y = PLAYER_START_Y;
 			game.xVel = 0;
 			game.yVel = 0;
-			game.started = true;
+			GameManager.getInstance().setStarted(true);
 
-			while (game.alive) delay(10);
+			while (GameManager.getInstance().isAlive()) delay(10);
 
 			// Write new highscore
-			if (game.score > game.highscore)
+			if (GameManager.getInstance().getScore() > GameManager.getInstance().getHighscore())
 			{
 				try
 				{
 					FileWriter highscoreWriter = new FileWriter(".highscore");
-					highscoreWriter.write(game.score + "\n");
+					highscoreWriter.write(GameManager.getInstance().getScore() + "\n");
 					highscoreWriter.close();
 				}
 				catch (Exception e)
@@ -493,6 +432,9 @@ public class Astrojump extends JPanel implements ActionListener,KeyListener
 
 			while (!game.qPressed && !game.rPressed) delay(10);
 			game.timer.stop();
+
+			// Сброс состояния GameManager перед новым запуском
+			GameManager.getInstance().reset();
 
 			frame.dispose();
 
@@ -511,5 +453,23 @@ public class Astrojump extends JPanel implements ActionListener,KeyListener
 		{
 			System.out.println("Delay failed");
 		}
+	}
+
+	@Override
+	public void onPlayerDeath() {
+		System.out.println("[EVENT] Player died!");
+	}
+
+	@Override
+	public void onNewHighscore(int score) {
+		System.out.println("[EVENT] New highscore: " + score);
+	}
+
+	public void setState(PlayerState state) {
+		this.state = state;
+	}
+
+	public PlayerState getState() {
+		return state;
 	}
 }
