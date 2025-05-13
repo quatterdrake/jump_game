@@ -1,5 +1,5 @@
 # Astrojump
-A 2D game where the character has to jump on platforms to get as high as he can without falling. Run fast and bounce on walls for higher jumps.
+In this 2D game, the player must navigate a character through a series of platforms, aiming to ascend as high as possible without falling. By sprinting and bouncing off walls, the character can achieve greater leaps, allowing for new heights and challenges.
 
 ## Gameplay
 
